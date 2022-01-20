@@ -222,7 +222,8 @@ class Ontology:
         self.root = root
 
         # Retrieve nodes as list
-        node_list = self.to_list(style='BFS', sort_by_id=False)
+        node_list = self.to_list(style='BFS', sort_by_id=False,
+                                 keep_placeholders=True)
 
         # Directly accessible concepts
         self.nodes = {}
@@ -246,7 +247,7 @@ class Ontology:
         return self.root.leaves
 
     def to_list(self, style='BFS', max_length=None,
-                keep_placeholders=True, sort_by_id=True):
+                keep_placeholders=False, sort_by_id=True):
         """
         Returns a list of concepts in the ontology.
 
