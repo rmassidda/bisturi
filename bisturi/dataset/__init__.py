@@ -113,21 +113,23 @@ class Dataset(torch.utils.data.Dataset):
             transforms.Normalize(mean=mean, std=std)
         ])
 
+        # Ontology
+        self.ontology = ontology
+
         # Reverse index
         reverse_index_path = os.path.join(directory, reverse_index)
         try:
             with open(reverse_index_path, 'r') as fp:
                 self.reverse_index = json.load(fp)
+            # String keys to int
+            self.reverse_index = {int(k): v for k, v
+                                  in self.reverse_index.items()}
         except FileNotFoundError:
             self.reverse_index = self._build_reverse_index(reverse_index_path)
 
-        # Ontology
-        self.ontology = ontology
-
-        # Eventually identify propagated concepts
-        if ontology:
-            for c_id, concept in ontology.nodes.items():
-                concept.propagated = c_id not in self.reverse_index
+        # Identify propagated concepts
+        for c_id, concept in ontology.nodes.items():
+            concept.propagated = c_id not in self.reverse_index
 
     def _build_reverse_index(self, reverse_index_path: str = None):
         """
