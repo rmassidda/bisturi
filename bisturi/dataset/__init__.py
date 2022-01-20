@@ -94,8 +94,8 @@ class Dataset(torch.utils.data.Dataset):
     """
     def __init__(self, directory: str,
                  reverse_index: str = 'reverse_index.json',
-                 mean: List[float] = [0., 0., 0.],
-                 std: List[float] = [0., 0., 0.],
+                 mean: List[float] = [1., 1., 1.],
+                 std: List[float] = [1., 1., 1.],
                  skip_image: bool = False,
                  skip_masks: bool = False,
                  ontology: Ontology = None):
