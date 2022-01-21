@@ -198,11 +198,13 @@ class WordNetConcept(Concept):
         # Offset
         self.offset = int(self.wordnet_id[1:])
 
-        # WordNet synset
-        self.synset = wn.synset_from_pos_and_offset(self.pos, self.offset)
-
         # Initialize concept
         super().__init__(self.offset, hypernyms, hyponyms)
+
+    @property
+    def synset(self):
+        # WordNet synset
+        return wn.synset_from_pos_and_offset(self.pos, self.offset)
 
     def __str__(self):
         return str(self.synset)
