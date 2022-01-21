@@ -1,17 +1,15 @@
 from bisturi.dataset import Dataset
 from bisturi.ontology import Concept
+from bisturi.model import LayerID, Direction
 from typing import List, Tuple
-import numpy as np
 import torch
 
-# Custom type aliases
-LayerId = Tuple[str, int]
-Direction = Tuple[LayerId, np.ndarray, np.ndarray]
+# Types
 Alignment = Tuple[Direction, Concept]
 
 
 def random_directions(model: torch.nn.Module,
-                      layer_id: LayerId,
+                      layer_id: LayerID,
                       n_directions: int) -> List[Direction]:
     """
     Generate random directions at a given layer.
@@ -20,7 +18,7 @@ def random_directions(model: torch.nn.Module,
     ----------
     model : torch.nn.Module
         The model to generate directions for.
-    layer_id : LayerId
+    layer_id : LayerID
         The layer to generate directions for.
     n_directions : int
         The number of directions to generate.
@@ -34,7 +32,7 @@ def random_directions(model: torch.nn.Module,
 
 
 def neuron_directions(model: torch.nn.Module,
-                      layer_id: LayerId) -> List[Direction]:
+                      layer_id: LayerID) -> List[Direction]:
     """
     Generate directions for each neuron in a given layer.
 
@@ -42,7 +40,7 @@ def neuron_directions(model: torch.nn.Module,
     ----------
     model : torch.nn.Module
         The model to generate directions for.
-    layer_id : LayerId
+    layer_id : LayerID
         The layer to generate directions for.
 
     Returns
@@ -79,7 +77,7 @@ def fit_bias(dirs: List[Direction],
 
 
 def learn_directions(model: torch.nn.Module,
-                     layer_id: LayerId,
+                     layer_id: LayerID,
                      dataset: Dataset) -> List[Direction]:
     """
     Learn directions for a given model
