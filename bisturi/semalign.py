@@ -115,7 +115,7 @@ def _quantile_thresholds(activations: Union[Tuple[str, Tuple], np.ndarray],
                                 shape=activations[1])
 
     # Init vector quantile
-    quant = QuantileVector(depth=directions.shape[1], seed=seed)
+    quant = QuantileVector(depth=directions.shape[0], seed=seed)
 
     for i in range(0, activations.shape[0], batch_size):
         # Select batch
@@ -123,10 +123,10 @@ def _quantile_thresholds(activations: Union[Tuple[str, Tuple], np.ndarray],
 
         # Fully connected
         if len(batch.shape) == 2:
-            batch = np.einsum('bn, nm -> bm', batch, directions)
+            batch = np.einsum('bn, mn -> bm', batch, directions)
         # Convolutional
         elif len(batch.shape) == 4:
-            batch = np.einsum('bnhw, nm -> bmhw', batch, directions)
+            batch = np.einsum('bnhw, mn -> bmhw', batch, directions)
             batch = np.transpose(batch, axes=(0, 2, 3, 1)) \
                       .reshape(-1, activations.shape[1])
 
@@ -188,7 +188,7 @@ def quantile_thresholds(activations: Dict[LayerID, np.ndarray],
     modules_ids = {d[0] for d in directions}
 
     # Module to direction dictionary
-    module_to_dirs = {m: np.stack([d[1] for d in directions if d[0] == m]).T
+    module_to_dirs = {m: np.stack([d[1] for d in directions if d[0] == m])
                       for m in modules_ids}
 
     # Parallelization over the modules
@@ -250,7 +250,7 @@ def quantile_thresholds(activations: Dict[LayerID, np.ndarray],
     module_counter = {m: 0 for m in modules_ids}
     for d in directions:
         # Reconstruct direction
-        new_dir = (d[0], d[1], thresholds[d[0]][module_counter[d[0]]])
+        new_dir = (d[0], d[1], -thresholds[d[0]][module_counter[d[0]]])
 
         # Append new direction
         biased_directions.append(new_dir)
