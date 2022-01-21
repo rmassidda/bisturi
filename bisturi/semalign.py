@@ -41,7 +41,7 @@ def random_directions(model: torch.nn.Module, layer_id: LayerID,
     """
     return [(layer_id,
              sigma * np.random.randn(n_units) + mu,
-             sigma * np.random.randn(1) + mu)
+             sigma * np.random.randn(1).item() + mu)
             for _ in range(n_directions)]
 
 
@@ -63,7 +63,7 @@ def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
         The generated directions.
     """
     basis = np.eye(n_units)
-    return [(layer_id, basis[i, :], np.array([0])) for i in range(n_units)]
+    return [(layer_id, basis[i, :], 0.) for i in range(n_units)]
 
 
 def store_directions(directions: List[Direction],
@@ -504,7 +504,6 @@ def semalign(activations: Dict[LayerID, np.ndarray],
     # Verbose
     if verbose:
         print('Semantic alignment for module {}'.format(module))
-        print()
 
     # Activations of the module
     activations = activations[module]
