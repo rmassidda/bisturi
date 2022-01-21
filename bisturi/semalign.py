@@ -6,6 +6,7 @@ from multiprocessing import Queue, Manager, Pool
 from tqdm.auto import tqdm
 from typing import Dict, List, Tuple, Union
 import numpy as np
+import pickle
 import torch
 
 # Types
@@ -62,6 +63,43 @@ def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
     """
     basis = np.eye(n_units)
     return [(layer_id, basis[i, :], np.array([0])) for i in range(n_units)]
+
+
+def store_directions(directions: List[Direction],
+                     path: str) -> None:
+    """
+    Store the directions in a given path.
+
+    Parameters
+    ----------
+    directions : List[Direction]
+        Directions to store.
+    path : str
+        Path of the folder in which to
+        store the directions.
+    """
+    # Pickle directions
+    with open(path, 'wb') as f:
+        pickle.dump(directions, f)
+
+
+def load_directions(path: str) -> List[Direction]:
+    """
+    Load the directions from a given path.
+
+    Parameters
+    ----------
+    path : str
+        Path of the folder in which to
+        retrieve the directions.
+
+    Returns
+    -------
+    List[Direction]
+        The loaded directions.
+    """
+    with open(path, 'rb') as f:
+        return pickle.load(f)
 
 
 def _quantile_thresholds(activations: Union[Tuple[str, Tuple], np.ndarray],
