@@ -11,7 +11,6 @@ import torchvision
 
 # Types
 LayerID = Tuple[str, int]
-Direction = Tuple[LayerID, np.ndarray, np.ndarray]
 
 
 def layerid_to_string(layer_id: LayerID) -> str:
