@@ -1,4 +1,7 @@
+from bisturi.dataset import Dataset
 from bisturi.model import LayerID
+from bisturi.util.vecquantile import QuantileVector
+from tqdm.auto import tqdm
 from typing import List, Tuple
 import numpy as np
 import pickle
@@ -41,9 +44,13 @@ def random_directions(model: torch.nn.Module, layer_id: LayerID,
 
 
 def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
-                      n_units: int) -> List[Direction]:
+                      n_units: int, activations: np.ndarray = None,
+                      quantile: float = 5e-3, batch_size: int = 128,
+                      seed: int = 1, verbose: bool = True) -> List[Direction]:
     """
     Generate directions for each neuron in a given layer.
+    The bias is computed by computing the quantile of
+    the activations for each neuron as in NetworkDissection.
 
     Parameters
     ----------
@@ -51,14 +58,68 @@ def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
         The model to generate directions for.
     layer_id : LayerID
         The layer to generate directions for.
+    n_units : int
+        The number of units in the layer.
+    activations : np.ndarray
+        The activations of the model on the given layer.
+    quantile : float, optional
+        The quantile to set the direction bias.
+    batch_size : int, optional
+        Batch size for the forward pass.
+    seed : int, optional
+        The seed to use for the random number generator.
+    verbose : bool, optional
+        Whether to print the progress bar.
 
     Returns
     -------
     List[Direction]
         The generated directions.
     """
+    # Canonical basis
     basis = np.eye(n_units)
-    return [(layer_id, basis[i, :], 0.) for i in range(n_units)]
+
+    # TODO: There are other interesting ways to compute the bias
+    #       for instance it could be fit as a concept classifier
+
+    # TODO: It would be nice to propose an external method to
+    #       compute the bias for an arbitrary set of directions
+    #       and not only during construction.
+
+    # Compute the bias as the quantile of the activations
+    quant = QuantileVector(depth=n_units, seed=seed)
+
+    # Iterate over the activations
+    for i in tqdm(range(0, activations.shape[0], batch_size),
+                  disable=not verbose):
+        # Select batch
+        batch = activations[i:i + batch_size]
+
+        # Convolutional batch must be reshaped
+        if len(batch.shape) == 4:
+            batch = np.transpose(batch, axes=(0, 2, 3, 1)) \
+                      .reshape(-1, activations.shape[1])
+
+        # Batch has now shape (n_examples, n_units)
+        # where n_examples is the batch size
+        # multiplied by the size of the feature map
+
+        # TODO: it could be useful to sample only
+        #       a portion of the n_examples
+
+        # Update quantile vector
+        quant.add(batch)
+
+    # Recover quantile vector
+    q = quant.readout(1000)[:, int(1000 * (1-quantile)-1)]
+
+    # Bias is negative of the quantile
+    bias = -q
+
+    # Construct directions
+    dirs = [(layer_id, basis[i, :], bias[i]) for i in range(n_units)]
+
+    return dirs
 
 
 def store_directions(directions: List[Direction],
