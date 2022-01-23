@@ -45,7 +45,7 @@ def _semalign_batch(act_batch: np.ndarray,
 
         # Only keep valid directions
         valid_dirs = [d_idx for d_idx in range(directions.shape[0])
-                      if dir_mask[d_idx] > 0]
+                      if np.any(dir_mask[d_idx] > 0)]
 
         # Generate activation masks
         for d_idx in valid_dirs:
@@ -121,7 +121,8 @@ def _semalign(activations: Union[Tuple[str, Tuple], np.ndarray],
     if len(activations.shape) == 2:
         a_mask = np.full((n_directions), False)
     elif len(activations.shape) == 4:
-        a_mask = np.full((n_directions, *activations.shape[2:]), False)
+        a_mask = np.full((n_directions, *dataset[0][2].shape), False)
+        bias = bias.reshape(bias.shape[0], 1, 1)
 
     # Pre-allocate concept mask
     c_mask = np.full(dataset[0][2].shape, False)
