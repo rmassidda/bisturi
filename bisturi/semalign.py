@@ -1,5 +1,5 @@
 from PIL import Image
-from bisturi.dataset import Dataset, collate_masks
+from bisturi.dataset import Dataset, ConceptMask
 from bisturi.directions import Direction
 from bisturi.model import LayerID
 from bisturi.ontology import Concept
@@ -7,16 +7,90 @@ from multiprocessing import Queue, Manager, Pool
 from tqdm.auto import tqdm
 from typing import Dict, List, Tuple, Union
 import numpy as np
-import torch
 
 # Types
 Alignment = Tuple[Direction, Concept]
 
 
-def _compute_sigma(activations: Union[Tuple[str, Tuple], np.ndarray],
-                   dataset: Dataset, directions: np.ndarray,
-                   bias: np.ndarray, queue: Queue,
-                   batch_size: int, start: int, end: int) -> np.ndarray:
+def _semalign_batch(act_batch: np.ndarray,
+                    images: List[ConceptMask],
+                    concepts: List[Concept],
+                    directions: np.ndarray,
+                    bias: np.ndarray,
+                    cmask_sum: np.ndarray,
+                    act_sum: np.ndarray,
+                    intersection: np.ndarray,
+                    a_mask: np.ndarray = None,
+                    c_mask: np.ndarray = None) \
+                            -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+    """
+    Estimates semantic alignment for
+    a given batch of annotated images.
+    """
+    for idx, image in enumerate(images):
+
+        # Directional activations
+        if len(act_batch.shape) == 2:
+            # Fully connected
+            dir_act = np.einsum('mn, n -> m', directions,
+                                act_batch[idx])
+        elif len(act_batch.shape) == 4:
+            # Convolutional
+            dir_act = np.einsum('mn, nhw -> mhw', directions,
+                                act_batch[idx])
+
+        # Directional mask
+        dir_mask = dir_act + bias > 0
+
+        # Only keep valid directions
+        valid_dirs = [d_idx for d_idx in range(directions.shape[0])
+                      if dir_mask[d_idx] > 0]
+
+        # Generate activation masks
+        for d_idx in valid_dirs:
+            # Retrieve directional activations
+            tmp_a_mask = dir_act[d_idx]
+
+            # Resize if convolutional
+            # TODO: handle other ways to match concept/activation masks
+            if len(tmp_a_mask.shape):
+                tmp_a_mask = Image.fromarray(tmp_a_mask) \
+                    .resize(image.shape,
+                            resample=Image.BILINEAR)
+            # Create mask
+            a_mask[d_idx] = tmp_a_mask > -bias[d_idx]
+
+            # Update \sum_x |M_u(x)|
+            act_sum[d_idx] += np.count_nonzero(a_mask[d_idx])
+
+        # Retrieve annotated concepts
+        selected_concepts = image.select_concepts(concepts)
+
+        # Update mask intersection
+        for c_idx, concept in enumerate(concepts):
+
+            if concept in selected_concepts:
+                # retrieve L_c(x)
+                c_mask = image.get_concept_mask(concept, c_mask)
+
+                # update \sum_x |L_c(x)|
+                cmask_sum[c_idx] += np.count_nonzero(c_mask)
+
+                # Update counters
+                for d_idx in valid_dirs:
+
+                    # |M_u(x) && L_c(x)|
+                    intersection[d_idx, c_idx] += np.count_nonzero(
+                        np.logical_and(a_mask[d_idx], c_mask))
+
+    return intersection, act_sum, cmask_sum
+
+
+def _semalign(activations: Union[Tuple[str, Tuple], np.ndarray],
+              dataset: Dataset, directions: np.ndarray,
+              bias: np.ndarray, queue: Queue,
+              batch_size: int, start: int, end: int) -> np.ndarray:
 
     # Eventually reload the memmap
     if isinstance(activations, tuple):
@@ -32,96 +106,52 @@ def _compute_sigma(activations: Union[Tuple[str, Tuple], np.ndarray],
     n_directions = directions.shape[0]
     n_concepts = len(concepts)
 
+    # Ignore images
+    dataset.skip_image = True
+
+    # Init loader
+    loader = range(start, end, batch_size)
+
     # Eventually allocate arrays
     intersection = np.zeros((n_directions, n_concepts))
     act_sum = np.zeros((n_directions))
     cmask_sum = np.zeros((n_concepts))
 
-    # Ignore images
-    dataset.skip_image = True
+    # Pre-allocate activation mask
+    if len(activations.shape) == 2:
+        a_mask = np.full((n_directions), False)
+    elif len(activations.shape) == 4:
+        a_mask = np.full((n_directions, *activations.shape[2:]), False)
 
-    # Create subset
-    dataset = torch.utils.data.Subset(dataset, range(start, end))
-
-    # Init loader
-    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                         collate_fn=collate_masks)
+    # Pre-allocate concept mask
+    c_mask = np.full(dataset[0][2].shape, False)
 
     # Show progress bar when not multiprocessing
     if queue is None:
         loader = tqdm(loader)
 
-    first = True
-    for batch in loader:
+    for idx in loader:
+        end_r = min(idx + batch_size, end)
 
-        # Ignore images and indices
-        _, _, batch = batch
+        # Select activations
+        act_batch = activations[idx:idx + end_r]
 
-        if first:
-            a_mask = np.full((n_directions, *batch[0].shape), False)
-            c_mask = np.full(batch[0].shape, False)
-            first = False
+        # Select images
+        images = [dataset[i][2] for i in range(idx, end_r)]
 
-        # TODO: retrieve activations for the whole batch
-
-        for image in batch:
-
-            # Directional activations
-            if len(activations.shape) == 2:
-                # Fully connected
-                dir_act = np.einsum('mn, n -> m', directions,
-                                    activations[image.index])
-            elif len(activations.shape) == 4:
-                # Convolutional
-                dir_act = np.einsum('mn, nhw -> mhw', directions,
-                                    activations[image.index])
-
-            # Directional mask
-            dir_mask = dir_act + bias > 0
-
-            # Only keep valid directions
-            valid_dirs = [d_idx for d_idx in range(n_directions)
-                          if dir_mask[d_idx] > 0]
-
-            # Generate activation masks
-            for d_idx in valid_dirs:
-                # Retrieve directional activations
-                tmp_a_mask = dir_act[d_idx]
-
-                # Resize if convolutional
-                if len(tmp_a_mask.shape):
-                    tmp_a_mask = Image.fromarray(tmp_a_mask) \
-                        .resize(image.shape,
-                                resample=Image.BILINEAR)
-                # Create mask
-                a_mask[d_idx] = tmp_a_mask > -bias[d_idx]
-
-                # Update \sum_x |M_u(x)|
-                act_sum[d_idx] += np.count_nonzero(a_mask[d_idx])
-
-            # Retrieve annotated concepts
-            selected_concepts = image.select_concepts(concepts)
-
-            for c_idx, concept in enumerate(concepts):
-
-                if concept in selected_concepts:
-                    # retrieve L_c(x)
-                    c_mask = image.get_concept_mask(concept, c_mask)
-
-                    # update \sum_x |L_c(x)|
-                    cmask_sum[c_idx] += np.count_nonzero(c_mask)
-
-                    # Update counters
-                    for d_idx in valid_dirs:
-
-                        # |M_u(x) && L_c(x)|
-                        intersection[d_idx, c_idx] += np.count_nonzero(
-                            np.logical_and(a_mask[d_idx], c_mask))
+        # Batch semantic alignment
+        intersection, act_sum, cmask_sum = _semalign_batch(act_batch, images,
+                                                           concepts,
+                                                           directions, bias,
+                                                           cmask_sum, act_sum,
+                                                           intersection,
+                                                           a_mask, c_mask)
 
         # Notify end of batch
         if queue:
             queue.put(1)
 
+    # Notify end of worker
     if queue:
         queue.put(None)
 
@@ -202,12 +232,11 @@ def semalign(activations: Dict[LayerID, np.ndarray],
     # Keep track of the best concepts per unit
     alignment = np.zeros((n_directions, n_concepts))
 
-    # Allocate partial arrays for parallelism
+    # Parallel computation
     if n_workers > 0:
         pool = Pool(n_workers)
 
-    # Compute intersection and union arrays
-    if n_workers > 0:
+        # Chunk the dataset
         psize = int(np.ceil(float(n_images) / n_workers))
         ranges = [(s, min(n_images, s + psize)) for s
                   in range(0, n_images, psize) if s < n_images]
@@ -223,7 +252,7 @@ def semalign(activations: Dict[LayerID, np.ndarray],
                           dataset, directions, bias, queue, batch_size, *r))
 
         # Map
-        map_result = pool.starmap_async(_compute_sigma, params)
+        map_result = pool.starmap_async(_semalign, params)
 
         # Total batches
         total = 0
@@ -250,8 +279,8 @@ def semalign(activations: Dict[LayerID, np.ndarray],
         act_sum = np.sum([e[2] for e in partial], axis=0)
         cmask_sum = np.sum([e[3] for e in partial], axis=0)
     else:
-        results = _compute_sigma(activations, dataset, directions, bias,
-                                 None, batch_size, 0, len(dataset))
+        results = _semalign(activations, dataset, directions, bias,
+                            None, batch_size, 0, len(dataset))
         intersection, union, act_sum, cmask_sum = results
 
     # Compute the alignment
