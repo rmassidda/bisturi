@@ -169,7 +169,7 @@ def semalign(activations: Dict[LayerID, np.ndarray],
              batch_size: int = 32,
              measure: str = 'IoU',
              module: LayerID = None,
-             verbose: bool = True) -> List[Tuple[Alignment, float]]:
+             verbose: bool = True) -> Tuple[List[Alignment], List[float]]:
     """
     Semantically align the given directions
     according to the concepts represented
@@ -194,7 +194,9 @@ def semalign(activations: Dict[LayerID, np.ndarray],
 
     Returns
     -------
-    psi : List[Tuple[Alignment, float]]
+    psi : List[Alignment]
+        Direction-concept alignments.
+    sigma: List[float]
         Estimate of the alignment.
     """
 
@@ -202,11 +204,18 @@ def semalign(activations: Dict[LayerID, np.ndarray],
     if module is None:
         unique_modules = {d[0] for d in directions}
         psi = []
+        sigma = []
         for module in unique_modules:
-            psi += semalign(activations, directions, dataset,
+            # Partial results on the module
+            p, s = semalign(activations, directions, dataset,
                             n_workers=n_workers, batch_size=batch_size,
                             measure=measure, module=module)
-        return psi
+
+            # Cumulate results
+            psi += p
+            sigma += s
+
+        return psi, sigma
 
     # Verbose
     if verbose:
@@ -218,14 +227,17 @@ def semalign(activations: Dict[LayerID, np.ndarray],
     # Images in the dataset
     n_images = activations.shape[0]
 
+    # Filter out directions not in the module
+    directions = [d for d in directions if d[0] == module]
+
+    # Stack directions
+    vec_dirs = np.stack([d[1] for d in directions if d[0] == module])
+
     # Stack bias
     bias = np.array([d[2] for d in directions if d[0] == module])
 
-    # Stack directions
-    directions = np.stack([d[1] for d in directions if d[0] == module])
-
     # Directions in the current module
-    n_directions = directions.shape[0]
+    n_directions = vec_dirs.shape[0]
 
     # Concepts in the ontology
     n_concepts = len(dataset.ontology.to_list())
@@ -250,7 +262,7 @@ def semalign(activations: Dict[LayerID, np.ndarray],
         params = []
         for i, r in enumerate(ranges):
             params.append(((activations.filename, activations.shape),
-                          dataset, directions, bias, queue, batch_size, *r))
+                          dataset, vec_dirs, bias, queue, batch_size, *r))
 
         # Map
         map_result = pool.starmap_async(_semalign, params)
@@ -280,7 +292,7 @@ def semalign(activations: Dict[LayerID, np.ndarray],
         act_sum = np.sum([e[2] for e in partial], axis=0)
         cmask_sum = np.sum([e[3] for e in partial], axis=0)
     else:
-        results = _semalign(activations, dataset, directions, bias,
+        results = _semalign(activations, dataset, vec_dirs, bias,
                             None, batch_size, 0, len(dataset))
         intersection, union, act_sum, cmask_sum = results
 
@@ -302,11 +314,40 @@ def semalign(activations: Dict[LayerID, np.ndarray],
 
     # Compute set of alignment
     psi = []
+    sigma = []
     for d_idx, direction in enumerate(directions):
         for c_idx, concept in enumerate(dataset.ontology.to_list()):
             # Ignore zero alignment
             if alignment[d_idx, c_idx] > 0:
-                psi.append(((direction, concept), alignment[d_idx, c_idx]))
+                psi.append((direction, concept))
+                sigma.append(alignment[d_idx, c_idx])
+
+    print('{} concepts aligned'.format(len(psi)))
 
     # Return list of alignments
-    return psi
+    return psi, sigma
+
+
+def filter_psi(psi: List[Alignment], sigma: List[float],
+               tau: float = 0.2) -> Tuple[List[Alignment], List[float]]:
+    """
+    Filter the alignments according to a threshold.
+
+    Parameters
+    ----------
+    psi : List[Alignment]
+        Alignments to filter.
+    sigma : List[float]
+        Corresponding alignment scores.
+    tau : float, optional
+        Threshold for filtering.
+
+    Returns
+    -------
+    psi : List[Alignment]
+        Filtered alignments.
+    sigma : List[float]
+        Corresponding alignment scores.
+    """
+    psi, sigma = zip(*[(p, s) for p, s in zip(psi, sigma) if s > tau])
+    return psi, sigma
