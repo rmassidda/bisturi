@@ -44,7 +44,8 @@ def random_directions(model: torch.nn.Module, layer_id: LayerID,
 
 
 def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
-                      n_units: int, activations: np.ndarray = None,
+                      n_units: int = None,
+                      activations: np.ndarray = None,
                       quantile: float = 5e-3, batch_size: int = 128,
                       seed: int = 1, verbose: bool = True) -> List[Direction]:
     """
@@ -58,8 +59,6 @@ def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
         The model to generate directions for.
     layer_id : LayerID
         The layer to generate directions for.
-    n_units : int
-        The number of units in the layer.
     activations : np.ndarray
         The activations of the model on the given layer.
     quantile : float, optional
@@ -76,6 +75,10 @@ def neuron_directions(model: torch.nn.Module, layer_id: LayerID,
     List[Direction]
         The generated directions.
     """
+    # Number of neurons
+    if n_units is None:
+        n_units = activations.shape[1]
+
     # Canonical basis
     basis = np.eye(n_units)
 
