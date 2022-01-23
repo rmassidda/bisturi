@@ -1,8 +1,10 @@
+from bisturi.loss import FocalLoss
 from bisturi.model import get_module, ModuleID
-from bisturi.util import reshape_concept_mask
 from bisturi.ontology import Concept
+from bisturi.util import reshape_concept_mask
+from multiprocessing import Queue
 from tqdm import tqdm
-from typing import Callable, Union
+from typing import Callable, Dict, List, Tuple, Union
 import numpy as np
 import torch
 
@@ -363,3 +365,76 @@ def TCAV(model: torch.nn.Module,
                          'the dataset')
 
     return (pos / n) - 0.5
+
+
+def train_CAV(concepts: List[Concept],
+              activations: Union[Tuple, np.ndarray],
+              dataset: torch.utils.data.Dataset,
+              train: List[List[int]],
+              val: List[List[int]],
+              gpu: bool,
+              epochs: int,
+              batch_size: int,
+              nw: int,
+              verbose: bool = False,
+              queue: Queue = None) -> Dict:
+
+    # Eventually reload the memmap
+    if isinstance(activations, tuple):
+        activations = np.memmap(activations[0],
+                                dtype=float,
+                                mode='r',
+                                shape=activations[1])
+
+    result = []
+    for concept, train_idx, val_idx in zip(concepts, train, val):
+        # Split dataset
+        dataset.target_concept = concept
+        dataset.return_index = True
+        dataset.skip_image = True
+
+        train_set = torch.utils.data.Subset(dataset, train_idx)
+        val_set = torch.utils.data.Subset(dataset, val_idx)
+
+        # Train CAV
+        cav = CAV(concept, train_set,
+                  activations,
+                  batch_size=batch_size,
+                  epochs=epochs,
+                  verbose=verbose,
+                  gpu=gpu, nw=0,
+                  criterion=FocalLoss)
+
+        # Evaluate CAV (Train)
+        train_stat = eval_CAV(cav, concept, train_set,
+                              activations,
+                              batch_size=batch_size,
+                              verbose=verbose,
+                              gpu=gpu, nw=0)
+
+        # Evaluate CAV (Val)
+        val_stat = eval_CAV(cav, concept, val_set,
+                            activations,
+                            batch_size=batch_size,
+                            verbose=verbose,
+                            gpu=gpu, nw=0)
+
+        # Create concept entry
+        result.append({'train_set': train_idx,
+                       'val_set': val_idx,
+                       'train_stat': train_stat,
+                       'val_stat': val_stat,
+                       'cav': np.array(cav.weight.data.detach()
+                                       .cpu().numpy())})
+
+        # Eventually notify progress
+        if queue is not None:
+            queue.put(1)
+
+        if verbose:
+            print('== Train')
+            print(result['train_stat'])
+            print('== Val')
+            print(result['val_stat'])
+
+    return result
