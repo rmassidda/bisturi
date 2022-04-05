@@ -1,6 +1,9 @@
 from functools import partial
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 from typing import Dict, List, Tuple, Union
+import numpy as np
 import re
 import torch
 import torchvision
@@ -14,7 +17,8 @@ Direction = Tuple[ModuleID, int]
 class LinearModel(torch.nn.Module):
     def __init__(self, input_size, output_size):
         super(LinearModel, self).__init__()
-        self.linears = torch.nn.ModuleList([torch.nn.Linear(input_size, output_size)])
+        self.linears = torch.nn.ModuleList(
+            [torch.nn.Linear(input_size, output_size)])
 
     def forward(self, x):
         for module in self.linears:
@@ -22,7 +26,9 @@ class LinearModel(torch.nn.Module):
         return x
 
 
-def load_model(model_name, path=None, GPU=False):
+def load_model(model_name: str,
+               path: Union[str, None] = None,
+               GPU: bool = False) -> torch.nn.Module:
     """
     Retrieves a model either from
     disk or by using torchvision.
@@ -83,7 +89,7 @@ def load_model(model_name, path=None, GPU=False):
     return model
 
 
-def get_names(model):
+def get_names(model: torch.nn.Module) -> List[str]:
     """
     Returns the list of names
     for the hookable modules
@@ -93,23 +99,24 @@ def get_names(model):
 
 
 def module_to_name(module_info):
-    """
-    Converts the information about a module produced
-    by a torchinfo summary into a string name.
-    """
-    if module_info.depth == 0:
-        return ''
+    raise NotImplementedError
+#     """
+#     Converts the information about a module produced
+#     by a torchinfo summary into a string name.
+#     """
+#     if module_info.depth == 0:
+#         return ''
 
-    name = module_info.get_layer_name(show_var_name=True, show_depth=False)
-    tokens = name.split('(')
-    name = tokens[-1].split(')')[0]
-    if not module_info.parent_info or module_info.depth == 1:
-        return name
-    else:
-        return module_to_name(module_info.parent_info) + '.' + name
+#     name = module_info.get_layer_name(show_var_name=True, show_depth=False)
+#     tokens = name.split('(')
+#     name = tokens[-1].split(')')[0]
+#     if not module_info.parent_info or module_info.depth == 1:
+#         return name
+#     else:
+#         return module_to_name(module_info.parent_info) + '.' + name
 
 
-def get_module(model, name):
+def get_module(model: torch.nn.Module, name: str) -> torch.nn.Module:
     """
     Selects a module by name
     """
@@ -127,7 +134,9 @@ def get_module(model, name):
     return module
 
 
-def accuracy(y_ground_truth, y_predicted, k=None):
+def accuracy(y_ground_truth: np.ndarray,
+             y_predicted: np.ndarray,
+             k: Union[int, None] = None) -> float:
     """
     Computes the accuracy of the predictions
     for the given ground truth.
@@ -141,28 +150,15 @@ def accuracy(y_ground_truth, y_predicted, k=None):
     return (y_predicted[idx] == y_ground_truth[idx]).float().mean()
 
 
-def accuracy_drop(y_ground_truth, y_a, y_b, max_k=None):
-    if max_k is None:
-        max_k = y_ground_truth.max() + 1
-
-    acc_a = [accuracy(y_ground_truth, acc_a, k)
-             for k in range(1, max_k)]
-    acc_b = [accuracy(y_ground_truth, acc_b, k)
-             for k in range(1, max_k)]
-    drop = [acc_a[i] - acc_b[i] for i in range(0, len(acc_a))]
-
-    return acc_a, acc_b, drop
-
-
 def AblateForward(model: torch.nn.Module,
-                  dataset: torch.utils.data.Dataset,
+                  dataset: Dataset,
                   dirs: Dict[ModuleID, List[int]],
-                  basis: Dict[ModuleID, torch.tensor] = None,
+                  basis: Dict[ModuleID, torch.Tensor] = {},
                   mu: float = 0.0,
                   batch_size: int = 32,
                   gpu: bool = False,
                   verbose: bool = False) \
-                    -> Tuple[torch.tensor, torch.tensor]:
+                    -> torch.Tensor:
     """
     Given a model, it produces the output over
     a dataset by ablating a set of directions.
@@ -170,10 +166,6 @@ def AblateForward(model: torch.nn.Module,
 
     # Evaluate model
     model.eval()
-
-    # Canonical basis
-    if basis is None:
-        basis = {module_id: None for module_id in dirs}
 
     # Forward counter per module
     unique_names = [module_name for module_name, _ in dirs]
@@ -189,12 +181,9 @@ def AblateForward(model: torch.nn.Module,
         if module_id in dirs:
             # TODO: handle convolutional layers
 
-            # TODO: use canonical basis
-            if basis[module_id] is None:
-                basis[module_id] = torch.identity(output)
-
-            # Change basis
-            output = output @ basis[module_id]
+            # Eventually change basis
+            if module_id in basis:
+                output = output @ basis[module_id]
 
             # Zero out the directions
             mask = torch.ones_like(output)
@@ -218,14 +207,14 @@ def AblateForward(model: torch.nn.Module,
              in zip(unique_names, modules)]
 
     # Iterate over the dataset
-    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+    loader = DataLoader(dataset, batch_size=batch_size)  # type: ignore
 
     # Progress bar
     if verbose:
         loader = tqdm(loader)
 
     # Accumulate output
-    y_tot = torch.zeros(len(dataset), dtype=torch.float)
+    y_tot = torch.zeros(len(loader), dtype=torch.float)
 
     for batch_idx, batch in enumerate(loader):
         # Separate inputs and targets

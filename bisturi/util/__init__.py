@@ -2,6 +2,10 @@ import numpy as np
 import torch
 
 
+def synset_to_name(synset):
+    return synset.pos() + str(synset.offset()).zfill(8)
+
+
 def top_k_accuracy(y_target: torch.Tensor, y_pred: torch.Tensor, k: int = 5):
     """
     Computes top-k accuracy between

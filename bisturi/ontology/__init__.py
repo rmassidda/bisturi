@@ -1,22 +1,68 @@
 from collections import deque
-from nltk.corpus import wordnet as wn
+from typing import TypeVar, Union, List, Any, Generic, Set
 from queue import Queue, LifoQueue
 
+T = TypeVar('T', bound='Concept[Any]')
 
-class Concept:
-    def __init__(self, name, hypernyms=None, hyponyms=None):
-        self.name = name
-        self.hypernyms = hypernyms if hypernyms is not None else []
-        self.hyponyms = hyponyms if hyponyms is not None else []
-        self.id = None
-        self.depth = None
+
+class Concept(Generic[T]):
+    def __init__(self,
+                 id: int,
+                 name: str,
+                 hypernyms: Union[List[T], None] = None,
+                 hyponyms: Union[List[T], None] = None):
+
+        # Attributes
+        self.id: int = id
+        self.name: str = name
+        self.hypernyms: List[T] = hypernyms if hypernyms is not None else []
+        self.hyponyms: List[T] = hyponyms if hyponyms is not None else []
+
+        # Annotations in the dataset
+        self.labels: Set = set()
+        self.original_labels: Set = set()
+
+        # Depth
+        self.depth: int = 0
+
+        # Cache calls
         self._cache_leaves = None
         self._cache_lineage = None
         self._cache_ancestors = None
         self._cache_descendants = None
 
-    def is_leaf(self):
+    def is_leaf(self) -> bool:
         return not self.hyponyms
+
+    def is_placeholder(self) -> bool:
+        return (len(self.hyponyms) == 1
+                and self.hyponyms[0].labels == self.labels)
+
+    def is_propagated(self) -> bool:
+        """
+        Returns True if the concept
+        is obtained via its children
+        and does not have any original
+        b_id associated
+        """
+        return len(self.original_labels) == 0
+
+    def propagation_ratio(self) -> float:
+        """
+        Summarizes the gain in terms
+        of associated b_ids given
+        the children.
+
+        Intuitively, the ratio is 0 if
+        all the b_ids of the concept
+        were manually assigned, while
+        it is 1 if all of them are
+        derived by the children of
+        the ontology.
+        """
+        num = len(self.original_labels)
+        dem = len(self.labels)
+        return 1 - num / dem
 
     def get_leaves(self):
         leaves = set()
@@ -67,14 +113,14 @@ class Concept:
         frontier = deque([self])
         while frontier:
             node = frontier.pop()
-            lineage.add(node.id)
+            lineage.add(node)
             frontier.extend(node.hypernyms)
 
         # Retrieve descendants
         frontier = deque([self])
         while frontier:
             node = frontier.pop()
-            lineage.add(node.id)
+            lineage.add(node)
             frontier.extend(node.hyponyms)
 
         return lineage
@@ -119,44 +165,13 @@ class Concept:
         return self.name
 
     def __repr__(self):
-        return f'Concept(id={self.id}, name={self.name})'
+        return f'Concept(name={self.name})'
 
 
-class WordnetConcept(Concept):
-    """
-    Represents a concept in the
-    Wordnet ontology.
-    """
-    def __init__(self, name, hypernyms=None, hyponyms=None):
-        # Initialize concept
-        super().__init__(name, hypernyms, hyponyms)
-
-        # The name of the concept must
-        # be the synset name as nXXXXXXXX
-        self.id = int('1'+self.name[1:])
-        self.pos = self.name[0]
-        self.off = int(self.name[1:])
-
-    def is_placeholder(self):
-        return (len(self.hyponyms) == 1
-                and self.hyponyms[0].leaves == self.leaves)
-
-    @property
-    def synset(self):
-        return wn.synset_from_pos_and_offset(self.pos, self.off)
-
-    def __str__(self):
-        return str(self.synset)
-
-    def __repr__(self):
-        return f'Concept(id={self.id}, name={self.name}, '\
-               f'synset={self.synset})'
-
-
-class Ontology:
-    def __init__(self, root):
+class Ontology(Generic[T]):
+    def __init__(self, root: T):
         # Root node
-        self.root = root
+        self.root: T = root
 
         # Retrieve nodes as list
         node_list = self.to_list(style='BFS', sort_by_id=False)
@@ -167,9 +182,7 @@ class Ontology:
             self.nodes[node.id] = node
 
         # Count nodes
-        self.n = len(node_list)
-
-        assert self.n == len(self.nodes)
+        self.n: int = len(node_list)
 
         # Depth is computed as the minimum
         # distance from the root
@@ -180,8 +193,7 @@ class Ontology:
         # its parents. Moreover, they are the nearest
         # to the root.
         for node in node_list[1:]:
-            parents_depths = [e.depth for e in node.hypernyms
-                              if e.depth is not None]
+            parents_depths = [e.depth for e in node.hypernyms]
             node.depth = min(parents_depths) + 1
 
     def get_leaves(self):
@@ -203,6 +215,8 @@ class Ontology:
             q = Queue()
         elif style == 'DFS':
             q = LifoQueue()
+        else:
+            raise ValueError(f'Unknown style: {style}')
 
         # Start visit
         q.put(self.root)
@@ -229,8 +243,3 @@ class Ontology:
             node_list = sorted(node_list, key=lambda c: c.id)
 
         return node_list
-
-
-class ConceptMask:
-    def __init__(self):
-        pass
